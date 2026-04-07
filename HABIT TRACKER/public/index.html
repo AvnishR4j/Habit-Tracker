@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monthly Planner</title>
+  <meta name="description" content="A sleek monthly habit tracker and task planner" />
+  <meta name="theme-color" content="#080808" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Planner" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+  <!-- ─── Google Fonts ─────────────────────────────────────────────────── -->
+  <!-- Syne: geometric, distinctive display font for headings             -->
+  <!-- DM Mono: monospaced for the clock, giving a terminal / precision feel -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <!-- ─── Firebase SDK (modular, CDN) ──────────────────────────────────── -->
+  <script type="module">
+    // Firebase imports — these are made available globally for the app script
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js';
+    import { getFirestore, doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js';
+
+    // ╔══════════════════════════════════════════════════════════════════╗
+    // ║  🔥  PASTE YOUR FIREBASE CONFIG BELOW  🔥                      ║
+    // ║  Go to Firebase Console → Project Settings → Your apps         ║
+    // ║  → Copy the firebaseConfig object                              ║
+    // ╚══════════════════════════════════════════════════════════════════╝
+    const firebaseConfig = {
+      apiKey:            "AIzaSyAkMAE_XkOcnur2xU7TLc240ex-jtQku7Y",
+      authDomain:        "habit-tracker-fdf2d.firebaseapp.com",
+      projectId:         "habit-tracker-fdf2d",
+      storageBucket:     "habit-tracker-fdf2d.firebasestorage.app",
+      messagingSenderId: "759948829251",
+      appId:             "1:759948829251:web:e16db3980841778b46eaf6",
+      measurementId:     "G-N7E2WG3ZG8"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    // Expose to the non-module app script via window globals
+    window._fb = { db, doc, getDoc, setDoc };
+    window.dispatchEvent(new Event('firebase-ready'));
+  </script>
+
+  <style>
+    /* ================================================================
+       CSS CUSTOM PROPERTIES — single source of truth for the palette
+       ================================================================ */
+    :root {
+      --bg:           #080808;   /* near-void black                     */
+      --surface:      #111111;   /* card / panel background             */
+      --surface-2:    #1a1a1a;   /* input / tag background              */
+      --border:       #242424;   /* subtle divider                      */
+      --border-hover: #383838;   /* border on hover                     */
+      --text-primary: #f0ede8;   /* warm almost-white                   */
+      --text-muted:   #5a5a5a;   /* secondary / placeholder text        */
+      --text-dim:     #333333;   /* very dim — day-of-week labels etc.  */
+      --accent:       #7ee8a2;   /* muted jade-green, the one pop       */
+      --accent-dim:   rgba(126, 232, 162, 0.12);
+      --accent-glow:  rgba(126, 232, 162, 0.25);
+      --danger:       #f87171;
+      --radius-sm:    6px;
+      --radius-md:    12px;
+      --radius-lg:    20px;
+      --font-ui:      'Syne', sans-serif;
+      --font-mono:    'DM Mono', monospace;
+      --transition:   0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* ================================================================
+       RESET & BASE
+       ================================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { font-size: 16px; scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      overflow-x: hidden;
+      /* subtle noise grain for depth */
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E");
+    }
+
+    /* ================================================================
+       PROGRESS BAR — fixed at the very top
+       ================================================================ */
+    #progress-track {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--border);
+      z-index: 1000;
+    }
+    #progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    #progress-label {
+      position: fixed;
+      top: 8px; right: 20px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity var(--transition);
+    }
+    #progress-label.visible { opacity: 1; }
+
+    /* ================================================================
+       LAYOUT SHELL
+       ================================================================ */
+    .app-wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+      animation: fadeIn 0.5s ease both;
+    }
+
+    /* ================================================================
+       HEADER
+       ================================================================ */
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 48px;
+      gap: 16px;
+    }
+
+    .header-left {}
+
+    .month-label {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      color: var(--text-primary);
+    }
+
+    .year-label {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      letter-spacing: 0.12em;
+    }
+
+    /* Real-time clock */
+    .clock-wrap {
+      text-align: right;
+    }
+    #clock {
+      font-family: var(--font-mono);
+      font-size: clamp(1.4rem, 3vw, 2rem);
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      color: var(--text-primary);
+      /* subtle digit-flip feel via tabular nums */
+      font-variant-numeric: tabular-nums;
+    }
+    .clock-date {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.1em;
+      margin-top: 4px;
+      text-transform: uppercase;
+    }
+
+    /* ================================================================
+       CONTROLS ROW (progress text + reset button)
+       ================================================================ */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+      gap: 12px;
+    }
+
+    .progress-text {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+    }
+    .progress-text span {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .btn-reset {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 7px 16px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: border-color var(--transition), color var(--transition), background var(--transition);
+    }
+    .btn-reset:hover {
+      border-color: var(--danger);
+      color: var(--danger);
+      background: rgba(248, 113, 113, 0.06);
+    }
+    .btn-reset:active { transform: scale(0.97); }
+
+    /* ================================================================
+       DAY-OF-WEEK HEADER
+       ================================================================ */
+    .dow-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+      margin-bottom: 4px;
+    }
+    .dow-cell {
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 6px 0;
+    }
+
+    /* ================================================================
+       CALENDAR GRID
+       ================================================================ */
+    #calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+    }
+
+    /* Individual day cell */
+    .day-cell {
+      position: relative;
+      aspect-ratio: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: flex-start;
+      padding: 8px 10px 6px;
+      transition: border-color var(--transition), background var(--transition), transform 0.15s ease;
+      /* staggered fade-in handled by JS */
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    .day-cell.visible {
+      opacity: 1;
+      transform: translateY(0);
+      transition: opacity 0.35s ease, transform 0.35s ease,
+                  border-color var(--transition), background var(--transition);
+    }
+    .day-cell.empty {
+      background: transparent;
+      border-color: transparent;
+      cursor: default;
+      pointer-events: none;
+    }
+    .day-cell:not(.empty):hover {
+      border-color: var(--border-hover);
+      background: #161616;
+      transform: translateY(-1px);
+    }
+    .day-cell:not(.empty):active {
+      transform: translateY(0);
+    }
+
+    /* Today highlight */
+    .day-cell.today {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .day-cell.today .day-num { color: var(--accent); }
+
+    .day-num {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      line-height: 1;
+    }
+
+    /* Task-count badge */
+    .task-badge {
+      position: absolute;
+      bottom: 6px;
+      right: 7px;
+      display: flex;
+      gap: 3px;
+      align-items: center;
+    }
+
+    /* Each dot represents one task */
+    .task-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: background var(--transition);
+    }
+    .task-dot.done { background: var(--accent); }
+
+    /* Mini completion arc — shown when day has tasks */
+    .day-arc {
+      position: absolute;
+      top: 6px; right: 6px;
+      width: 16px; height: 16px;
+      display: none;
+    }
+    .day-cell.has-tasks .day-arc { display: block; }
+
+    /* ================================================================
+       SIDE PANEL (task drawer)
+       ================================================================ */
+    .panel-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      z-index: 500;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.28s ease;
+    }
+    .panel-overlay.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .side-panel {
+      position: fixed;
+      top: 0; right: 0;
+      width: min(420px, 100vw);
+      height: 100vh;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      z-index: 600;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+    }
+    .side-panel.open {
+      transform: translateX(0);
+      box-shadow: -24px 0 80px rgba(0,0,0,0.6);
+    }
+
+    /* Panel header */
+    .panel-header {
+      padding: 28px 28px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .panel-date-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .panel-day-heading {
+      font-size: 1.7rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+    .panel-stats {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+    .panel-stats .done-count { color: var(--accent); }
+
+    .btn-close {
+      position: absolute;
+      top: 24px; right: 24px;
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color var(--transition), color var(--transition), background var(--transition);
+      line-height: 1;
+    }
+    .btn-close:hover {
+      border-color: var(--border-hover);
+      color: var(--text-primary);
+      background: var(--border);
+    }
+
+    /* Task input area */
+    .task-input-wrap {
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      display: flex;
+      gap: 10px;
+    }
+    #task-input {
+      flex: 1;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      padding: 10px 14px;
+      outline: none;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+    #task-input::placeholder { color: var(--text-dim); }
+    #task-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .btn-add {
+      background: var(--accent);
+      color: #080808;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 500;
+      width: 40px;
+      flex-shrink: 0;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform 0.15s ease, opacity var(--transition);
+    }
+    .btn-add:hover { opacity: 0.85; }
+    .btn-add:active { transform: scale(0.92); }
+
+    /* Task list */
+    #task-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    /* Custom scrollbar */
+    #task-list::-webkit-scrollbar { width: 4px; }
+    #task-list::-webkit-scrollbar-track { background: transparent; }
+    #task-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--text-dim);
+      padding: 40px 0;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+    }
+    .empty-state svg { opacity: 0.2; }
+
+    /* Individual task item */
+    .task-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 14px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      animation: slideIn 0.25s cubic-bezier(0.4, 0, 0.2, 1) both;
+      transition: border-color var(--transition), opacity var(--transition);
+      position: relative;
+      overflow: hidden;
+    }
+    .task-item::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: var(--accent);
+      transform: scaleY(0);
+      transform-origin: bottom;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .task-item.done::before { transform: scaleY(1); }
+
+    .task-item:hover { border-color: var(--border-hover); }
+
+    /* Checkbox */
+    .task-check {
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      border: 1.5px solid var(--text-dim);
+      flex-shrink: 0;
+      margin-top: 1px;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color var(--transition), background var(--transition);
+      position: relative;
+    }
+    .task-item.done .task-check {
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+    /* Checkmark SVG drawn on with stroke-dasharray */
+    .task-check svg {
+      position: absolute;
+      width: 10px; height: 10px;
+      stroke: #080808;
+      stroke-width: 2.5;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .task-check svg path {
+      stroke-dasharray: 20;
+      stroke-dashoffset: 20;
+      transition: stroke-dashoffset 0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.05s;
+    }
+    .task-item.done .task-check svg path { stroke-dashoffset: 0; }
+
+    .task-text {
+      flex: 1;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      word-break: break-word;
+      transition: color var(--transition), text-decoration-color var(--transition);
+      text-decoration: none;
+    }
+    .task-item.done .task-text {
+      color: var(--text-muted);
+      text-decoration: line-through;
+      text-decoration-color: var(--text-dim);
+    }
+
+    .btn-delete {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 0 2px;
+      line-height: 1;
+      opacity: 0;
+      transition: color var(--transition), opacity var(--transition);
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .task-item:hover .btn-delete { opacity: 1; }
+    .btn-delete:hover { color: var(--danger); }
+
+    /* ================================================================
+       KEYFRAME ANIMATIONS
+       ================================================================ */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0);    }
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(10px); }
+      to   { opacity: 1; transform: translateX(0);    }
+    }
+
+    @keyframes pulseAccent {
+      0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+      50%       { box-shadow: 0 0 0 6px transparent; }
+    }
+
+    /* ================================================================
+       TOAST NOTIFICATION (for auto-reset notice)
+       ================================================================ */
+    #toast {
+      position: fixed;
+      bottom: 28px; left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      padding: 12px 22px;
+      border-radius: var(--radius-sm);
+      z-index: 2000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      white-space: nowrap;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+
+
+    /* ================================================================
+       RESPONSIVE ADJUSTMENTS
+       ================================================================ */
+    @media (max-width: 600px) {
+      .app-wrap { padding: 36px 14px 60px; }
+      .day-cell { padding: 5px 6px 4px; }
+      .day-num { font-size: 11px; }
+      .task-dot { width: 4px; height: 4px; }
+      .side-panel { width: 100vw; border-left: none; }
+    }
+  </style>
+</head>
+
+<body>
+
+
+
+  <!-- ─── FIXED PROGRESS BAR ──────────────────────────────────────── -->
+  <div id="progress-track">
+    <div id="progress-fill"></div>
+  </div>
+  <div id="progress-label">0%</div>
+
+  <!-- ─── TOAST ───────────────────────────────────────────────────── -->
+  <div id="toast"></div>
+
+  <!-- ─── MAIN APP WRAPPER ─────────────────────────────────────────── -->
+  <div class="app-wrap">
+
+    <!-- HEADER -->
+    <header>
+      <div class="header-left">
+        <div class="month-label" id="month-label">October</div>
+        <div class="year-label" id="year-label">2025 · MONTHLY PLANNER</div>
+      </div>
+      <div class="clock-wrap">
+        <div id="clock">00:00:00</div>
+        <div class="clock-date" id="clock-date"></div>
+      </div>
+    </header>
+
+    <!-- CONTROLS ROW -->
+    <div class="controls-row">
+      <div class="progress-text" id="progress-text">
+        <span>0</span> of <span>0</span> tasks complete
+      </div>
+      <button class="btn-reset" id="btn-reset">⟳ Reset Month</button>
+    </div>
+
+    <!-- DAY-OF-WEEK LABELS -->
+    <div class="dow-grid">
+      <div class="dow-cell">Sun</div>
+      <div class="dow-cell">Mon</div>
+      <div class="dow-cell">Tue</div>
+      <div class="dow-cell">Wed</div>
+      <div class="dow-cell">Thu</div>
+      <div class="dow-cell">Fri</div>
+      <div class="dow-cell">Sat</div>
+    </div>
+
+    <!-- CALENDAR GRID — populated by JS -->
+    <div id="calendar-grid"></div>
+
+  </div><!-- /.app-wrap -->
+
+  <!-- ─── SIDE PANEL OVERLAY ──────────────────────────────────────── -->
+  <div class="panel-overlay" id="panel-overlay"></div>
+
+  <!-- ─── SIDE PANEL ──────────────────────────────────────────────── -->
+  <div class="side-panel" id="side-panel" aria-modal="true" role="dialog">
+
+    <div class="panel-header">
+      <div class="panel-date-label" id="panel-date-label">— / — / —</div>
+      <div class="panel-day-heading" id="panel-day-heading">Day</div>
+      <div class="panel-stats" id="panel-stats"></div>
+      <button class="btn-close" id="btn-close" aria-label="Close panel">✕</button>
+    </div>
+
+    <div class="task-input-wrap">
+      <input
+        type="text"
+        id="task-input"
+        placeholder="Add a task for this day…"
+        maxlength="200"
+        autocomplete="off"
+      />
+      <button class="btn-add" id="btn-add" aria-label="Add task">+</button>
+    </div>
+
+    <div id="task-list"></div>
+
+  </div><!-- /.side-panel -->
+
+
+  <!-- ================================================================
+       JAVASCRIPT
+       ================================================================ -->
+  <script>
+  (() => {
+    'use strict';
+
+    /* ── CONSTANTS ─────────────────────────────────────────────────── */
+    const STORAGE_KEY   = 'monthlyplanner_v2';
+    const FIRESTORE_COL = 'planners';       // Firestore collection name
+    const FIRESTORE_DOC = 'default';        // Document ID (single-user mode)
+    const MONTH_NAMES = [
+      'January','February','March','April','May','June',
+      'July','August','September','October','November','December'
+    ];
+    const DAY_NAMES_LONG = [
+      'Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'
+    ];
+
+    /* ── STATE ─────────────────────────────────────────────────────── */
+    let state = {
+      month: null,  // 0-indexed
+      year:  null,
+      tasks: {}     // { "YYYY-MM-DD": [ {id, text, done} ] }
+    };
+    let selectedDateKey = null; // currently open date key
+    let firebaseReady   = false;
+
+    /* ── DOM REFS ──────────────────────────────────────────────────── */
+    const $  = id => document.getElementById(id);
+    const grid           = $('calendar-grid');
+    const monthLabel     = $('month-label');
+    const yearLabel      = $('year-label');
+    const clock          = $('clock');
+    const clockDate      = $('clock-date');
+    const progressFill   = $('progress-fill');
+    const progressLbl    = $('progress-label');
+    const progressText   = $('progress-text');
+    const overlay        = $('panel-overlay');
+    const panel          = $('side-panel');
+    const panelDateLbl   = $('panel-date-label');
+    const panelHeading   = $('panel-day-heading');
+    const panelStats     = $('panel-stats');
+    const taskInput      = $('task-input');
+    const taskList       = $('task-list');
+    const toast          = $('toast');
+
+    /* ================================================================
+       STORAGE HELPERS — localStorage (offline fallback)
+       ================================================================ */
+
+    /** Load state from localStorage, or return null. */
+    function loadStateLocal() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch (_) {}
+      return null;
+    }
+
+    /** Persist current state to localStorage. */
+    function saveStateLocal() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    /* ================================================================
+       FIRESTORE HELPERS
+       ================================================================ */
+
+    /** Returns the Firestore document reference for the planner. */
+    function getDocRef() {
+      const { db, doc } = window._fb;
+      return doc(db, FIRESTORE_COL, FIRESTORE_DOC);
+    }
+
+    /** Load state from Firestore. Returns the data or null. */
+    async function loadStateFirestore() {
+      try {
+        const { getDoc } = window._fb;
+        const snap = await getDoc(getDocRef());
+        if (snap.exists()) return snap.data();
+      } catch (err) {
+        console.warn('⚠️ Firestore read failed, falling back to localStorage:', err);
+      }
+      return null;
+    }
+
+    /** Save state to Firestore (fire-and-forget with error logging). */
+    async function saveStateFirestore() {
+      try {
+        const { setDoc } = window._fb;
+        await setDoc(getDocRef(), JSON.parse(JSON.stringify(state)));
+      } catch (err) {
+        console.warn('⚠️ Firestore write failed:', err);
+      }
+    }
+
+    /* ================================================================
+       COMBINED SAVE — writes to both stores
+       ================================================================ */
+
+    function saveState() {
+      saveStateLocal();
+      if (firebaseReady) saveStateFirestore();
+    }
+
+    /** Wipe data and reset to a fresh month. */
+    function clearState(month, year) {
+      state = { month, year, tasks: {} };
+      saveState();
+    }
+
+    /* ================================================================
+       AUTO-RESET — checks whether the stored month matches current
+       ================================================================ */
+    function checkAutoReset(savedState, nowMonth, nowYear) {
+      if (!savedState) return false;
+      return !(savedState.month === nowMonth && savedState.year === nowYear);
+    }
+
+
+
+    /* ================================================================
+       CLOCK — updates every second
+       ================================================================ */
+    function updateClock() {
+      const now = new Date();
+      const hh  = String(now.getHours()).padStart(2, '0');
+      const mm  = String(now.getMinutes()).padStart(2, '0');
+      const ss  = String(now.getSeconds()).padStart(2, '0');
+      clock.textContent = `${hh}:${mm}:${ss}`;
+
+      // Date line below the clock
+      const day  = DAY_NAMES_LONG[now.getDay()].slice(0, 3).toUpperCase();
+      const d    = String(now.getDate()).padStart(2, '0');
+      const mon  = MONTH_NAMES[now.getMonth()].slice(0, 3).toUpperCase();
+      const yr   = now.getFullYear();
+      clockDate.textContent = `${day} ${d} ${mon} ${yr}`;
+    }
+
+    /* ================================================================
+       PROGRESS CALCULATION & RENDER
+       ================================================================ */
+
+    /** Returns { total, done } across all tasks in the current month. */
+    function getProgress() {
+      let total = 0, done = 0;
+      Object.values(state.tasks).forEach(list => {
+        total += list.length;
+        done  += list.filter(t => t.done).length;
+      });
+      return { total, done };
+    }
+
+    /** Re-renders the top progress bar and the inline label. */
+    function renderProgress() {
+      const { total, done } = getProgress();
+      const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+
+      // Top bar
+      progressFill.style.width = `${pct}%`;
+
+      // Top-right label — only show when there's at least 1 task
+      if (total > 0) {
+        progressLbl.textContent = `${pct}%`;
+        progressLbl.classList.add('visible');
+      } else {
+        progressLbl.classList.remove('visible');
+      }
+
+      // Inline text under header
+      progressText.innerHTML =
+        `<span class="done-count" style="color:var(--accent)">${done}</span>` +
+        ` of <span>${total}</span> task${total !== 1 ? 's' : ''} complete` +
+        (total > 0 ? ` · <span style="color:var(--accent)">${pct}%</span>` : '');
+    }
+
+    /* ================================================================
+       DATE KEY HELPERS
+       ================================================================ */
+
+    /** Returns a compact "YYYY-MM-DD" string for indexing. */
+    function dateKey(year, month, day) {
+      return `${year}-${String(month + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    }
+
+    /** Parses a dateKey back into { year, month0, day }. */
+    function parseKey(key) {
+      const [y, m, d] = key.split('-').map(Number);
+      return { year: y, month0: m - 1, day: d };
+    }
+
+    /* ================================================================
+       CALENDAR RENDERING
+       ================================================================ */
+
+    function renderCalendar() {
+      const { month, year } = state;
+
+      // Update header labels
+      monthLabel.textContent = MONTH_NAMES[month];
+      yearLabel.textContent  = `${year} · MONTHLY PLANNER`;
+
+      // First weekday of the month (0 = Sun)
+      const firstDow = new Date(year, month, 1).getDay();
+      // Total days in this month
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      const today = new Date();
+      const isCurrentMonth = today.getMonth() === month && today.getFullYear() === year;
+      const todayDate = today.getDate();
+
+      grid.innerHTML = '';
+
+      // Leading empty cells
+      for (let i = 0; i < firstDow; i++) {
+        const empty = document.createElement('div');
+        empty.className = 'day-cell empty';
+        grid.appendChild(empty);
+      }
+
+      // Day cells
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key    = dateKey(year, month, d);
+        const tasks  = state.tasks[key] || [];
+        const cell   = document.createElement('div');
+        const isToday = isCurrentMonth && d === todayDate;
+
+        cell.className = 'day-cell' + (isToday ? ' today' : '') + (tasks.length ? ' has-tasks' : '');
+        cell.dataset.key = key;
+        cell.dataset.day = d;
+
+        // Day number
+        const numEl = document.createElement('div');
+        numEl.className = 'task-num day-num';
+        numEl.textContent = d;
+        cell.appendChild(numEl);
+
+        // Task dots (max 5 visible)
+        if (tasks.length > 0) {
+          const badge = document.createElement('div');
+          badge.className = 'task-badge';
+
+          const maxDots = Math.min(tasks.length, 5);
+          for (let i = 0; i < maxDots; i++) {
+            const dot = document.createElement('div');
+            dot.className = 'task-dot' + (tasks[i]?.done ? ' done' : '');
+            badge.appendChild(dot);
+          }
+          cell.appendChild(badge);
+        }
+
+        // Staggered entrance animation
+        const delay = (firstDow + d - 1) * 18; // ms per cell
+        setTimeout(() => cell.classList.add('visible'), delay);
+
+        // Click handler
+        cell.addEventListener('click', () => openPanel(key, d));
+
+        grid.appendChild(cell);
+      }
+    }
+
+    /* ================================================================
+       SIDE PANEL OPEN / CLOSE
+       ================================================================ */
+
+    /** Opens the side panel for a specific date. */
+    function openPanel(key, day) {
+      selectedDateKey = key;
+      const { year, month0 } = parseKey(key);
+
+      const dateObj    = new Date(year, month0, day);
+      const dayName    = DAY_NAMES_LONG[dateObj.getDay()];
+      const monthShort = MONTH_NAMES[month0].slice(0, 3);
+
+      panelDateLbl.textContent = `${dayName} · ${monthShort} ${day}, ${year}`;
+      panelHeading.textContent = `${dayName}`;
+
+      // Render tasks
+      renderTaskList();
+
+      // Open animation
+      overlay.classList.add('open');
+      panel.classList.add('open');
+      taskInput.focus();
+
+      // Trap focus — close on Escape
+      document.addEventListener('keydown', handlePanelKey);
+    }
+
+    /** Closes the side panel. */
+    function closePanel() {
+      overlay.classList.remove('open');
+      panel.classList.remove('open');
+      selectedDateKey = null;
+      document.removeEventListener('keydown', handlePanelKey);
+    }
+
+    function handlePanelKey(e) {
+      if (e.key === 'Escape') closePanel();
+    }
+
+    /* ================================================================
+       TASK LIST RENDERING (inside the panel)
+       ================================================================ */
+
+    function renderTaskList() {
+      const tasks = (state.tasks[selectedDateKey] || []);
+      const done  = tasks.filter(t => t.done).length;
+
+      // Update stats line
+      panelStats.innerHTML = tasks.length === 0
+        ? '— no tasks yet'
+        : `<span class="done-count">${done}</span> / ${tasks.length} complete`;
+
+      taskList.innerHTML = '';
+
+      if (tasks.length === 0) {
+        taskList.innerHTML = `
+          <div class="empty-state">
+            <svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+              <rect x="3" y="5" width="18" height="16" rx="2"/>
+              <path d="M16 3v4M8 3v4M3 9h18"/>
+            </svg>
+            <span>Nothing planned yet</span>
+          </div>`;
+        return;
+      }
+
+      tasks.forEach((task, idx) => {
+        const item = document.createElement('div');
+        item.className = 'task-item' + (task.done ? ' done' : '');
+        item.dataset.id = task.id;
+
+        item.innerHTML = `
+          <div class="task-check" title="${task.done ? 'Mark incomplete' : 'Mark complete'}">
+            <svg viewBox="0 0 12 10"><path d="M1.5 5l3 3 6-6"/></svg>
+          </div>
+          <div class="task-text">${escapeHTML(task.text)}</div>
+          <button class="btn-delete" title="Delete task" aria-label="Delete task">×</button>
+        `;
+
+        // Toggle done on item click (excluding delete button)
+        item.addEventListener('click', e => {
+          if (e.target.closest('.btn-delete')) return;
+          toggleTask(idx);
+        });
+
+        // Delete button
+        item.querySelector('.btn-delete').addEventListener('click', e => {
+          e.stopPropagation();
+          deleteTask(idx);
+        });
+
+        taskList.appendChild(item);
+      });
+    }
+
+    /* ================================================================
+       TASK CRUD
+       ================================================================ */
+
+    /** Adds a new task to the selected date. */
+    function addTask(text) {
+      text = text.trim();
+      if (!text) return;
+
+      if (!state.tasks[selectedDateKey]) {
+        state.tasks[selectedDateKey] = [];
+      }
+
+      state.tasks[selectedDateKey].push({
+        id:   Date.now() + Math.random(),
+        text,
+        done: false
+      });
+
+      saveState();
+      renderTaskList();
+      renderProgress();
+      refreshDayCell(selectedDateKey);
+    }
+
+    /** Toggles the done state of a task by its index. */
+    function toggleTask(idx) {
+      const tasks = state.tasks[selectedDateKey];
+      if (!tasks || !tasks[idx]) return;
+      tasks[idx].done = !tasks[idx].done;
+      saveState();
+      renderTaskList();
+      renderProgress();
+      refreshDayCell(selectedDateKey);
+    }
+
+    /** Removes a task by index. */
+    function deleteTask(idx) {
+      const tasks = state.tasks[selectedDateKey];
+      if (!tasks) return;
+      tasks.splice(idx, 1);
+      // Clean up empty arrays
+      if (tasks.length === 0) delete state.tasks[selectedDateKey];
+      saveState();
+      renderTaskList();
+      renderProgress();
+      refreshDayCell(selectedDateKey);
+    }
+
+    /* ================================================================
+       REFRESH SINGLE DAY CELL (after task changes)
+       ================================================================ */
+
+    /** Updates dots on a specific day cell without re-rendering the whole grid. */
+    function refreshDayCell(key) {
+      const cell = grid.querySelector(`[data-key="${key}"]`);
+      if (!cell) return;
+
+      const tasks = state.tasks[key] || [];
+
+      // Remove existing badge
+      const oldBadge = cell.querySelector('.task-badge');
+      if (oldBadge) oldBadge.remove();
+
+      // has-tasks class
+      cell.classList.toggle('has-tasks', tasks.length > 0);
+
+      if (tasks.length > 0) {
+        const badge = document.createElement('div');
+        badge.className = 'task-badge';
+        const maxDots = Math.min(tasks.length, 5);
+        for (let i = 0; i < maxDots; i++) {
+          const dot = document.createElement('div');
+          dot.className = 'task-dot' + (tasks[i]?.done ? ' done' : '');
+          badge.appendChild(dot);
+        }
+        cell.appendChild(badge);
+      }
+    }
+
+    /* ================================================================
+       MANUAL RESET
+       ================================================================ */
+
+    function handleReset() {
+      const { month, year } = state;
+      const confirmed = window.confirm(
+        `Reset all tasks for ${MONTH_NAMES[month]} ${year}?\n\nThis cannot be undone.`
+      );
+      if (!confirmed) return;
+      clearState(month, year);
+      renderCalendar();
+      renderProgress();
+      showToast('Month reset — fresh start! 🌱');
+      if (selectedDateKey) {
+        renderTaskList();
+      }
+    }
+
+    /* ================================================================
+       TOAST NOTIFICATION
+       ================================================================ */
+
+    let toastTimer = null;
+    function showToast(msg, duration = 3200) {
+      clearTimeout(toastTimer);
+      toast.textContent = msg;
+      toast.classList.add('show');
+      toastTimer = setTimeout(() => toast.classList.remove('show'), duration);
+    }
+
+    /* ================================================================
+       UTILITY — escape HTML to prevent XSS in task text
+       ================================================================ */
+    function escapeHTML(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    /* ================================================================
+       INITIALISATION — renders UI instantly from localStorage
+       ================================================================ */
+
+    function init() {
+      const now       = new Date();
+      const nowMonth  = now.getMonth();
+      const nowYear   = now.getFullYear();
+
+      // Load from localStorage immediately (no network wait)
+      const saved = loadStateLocal();
+
+      // Auto-reset logic
+      const shouldAutoReset = checkAutoReset(saved, nowMonth, nowYear);
+
+      if (shouldAutoReset) {
+        state = { month: nowMonth, year: nowYear, tasks: {} };
+        saveStateLocal();
+        showToast(`New month! ${MONTH_NAMES[nowMonth]} ${nowYear} — all clear 🗓️`, 4000);
+      } else if (saved) {
+        state = saved;
+        state.month = nowMonth;
+        state.year  = nowYear;
+      } else {
+        state = { month: nowMonth, year: nowYear, tasks: {} };
+        saveStateLocal();
+      }
+
+      // Render UI immediately — no spinner, no waiting
+      renderCalendar();
+      renderProgress();
+
+      // Start real-time clock
+      updateClock();
+      setInterval(updateClock, 1000);
+
+      // Panel: close on overlay click
+      overlay.addEventListener('click', closePanel);
+      $('btn-close').addEventListener('click', closePanel);
+
+      // Add task on button click
+      $('btn-add').addEventListener('click', () => {
+        addTask(taskInput.value);
+        taskInput.value = '';
+        taskInput.focus();
+      });
+
+      // Add task on Enter key
+      taskInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          addTask(taskInput.value);
+          taskInput.value = '';
+        }
+      });
+
+      // Reset button
+      $('btn-reset').addEventListener('click', handleReset);
+    }
+
+    /* ================================================================
+       BACKGROUND FIRESTORE SYNC — merges cloud data after SDK loads
+       ================================================================ */
+
+    async function syncFromFirestore() {
+      const cloudData = await loadStateFirestore();
+
+      if (cloudData && cloudData.tasks) {
+        // Check if cloud has different/newer data
+        const cloudStr = JSON.stringify(cloudData.tasks);
+        const localStr = JSON.stringify(state.tasks);
+
+        if (cloudStr !== localStr) {
+          // Cloud wins — update state and re-render
+          state.tasks = cloudData.tasks;
+          saveStateLocal();
+          renderCalendar();
+          renderProgress();
+          if (selectedDateKey) renderTaskList();
+        }
+      } else if (Object.keys(state.tasks).length > 0) {
+        // No cloud data yet — push local state to Firestore to seed it
+        saveStateFirestore();
+      }
+
+      showToast('☁️ Synced with Firebase', 2000);
+    }
+
+    /* ================================================================
+       BOOTSTRAP — render first, sync later
+       ================================================================ */
+
+    function bootstrap() {
+      // 1) Render UI immediately from localStorage
+      init();
+
+      // 2) Firebase sync in background — no blocking
+      if (window._fb) {
+        firebaseReady = true;
+        syncFromFirestore();
+      } else {
+        window.addEventListener('firebase-ready', () => {
+          firebaseReady = true;
+          syncFromFirestore();
+        }, { once: true });
+      }
+    }
+
+    // 🚀 LAUNCH
+    bootstrap();
+
+  })();
+  </script>
+
+  <!-- ─── Service Worker Registration ──────────────────────────────── -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('✅ SW registered:', reg.scope))
+        .catch(err => console.warn('⚠️ SW registration failed:', err));
+    }
+  </script>
+</body>
+</html>
